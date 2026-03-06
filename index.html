@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MultiBlindTest</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>🎵 MultiBlindTest</h1>
+      <p class="subtitle">Guess the song title or the artist!</p>
+    </header>
+
+    <div id="setup-screen" class="screen active">
+      <div class="setup-card">
+        <h2>Game Setup</h2>
+        <label>
+          Number of tracks:
+          <select id="track-count">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+          </select>
+        </label>
+        <label>
+          Search a Deezer playlist:
+          <div id="playlist-search-row">
+            <input type="text" id="playlist-query" placeholder="e.g. Top Hits, Chill, 80s…" />
+            <button type="button" id="search-playlist-btn" class="btn btn-primary">Search</button>
+          </div>
+        </label>
+        <label id="playlist-select-label" style="display:none">
+          Select a playlist:
+          <select id="playlist-select"></select>
+        </label>
+        <label>
+          Time limit (seconds):
+          <select id="time-limit">
+            <option value="30">30s</option>
+            <option value="60" selected>60s</option>
+            <option value="90">90s</option>
+            <option value="0">No limit</option>
+          </select>
+        </label>
+        <button id="start-btn" class="btn btn-primary">▶ Start Game</button>
+        <p class="note">Powered by Deezer 30s previews</p>
+      </div>
+    </div>
+
+    <div id="game-screen" class="screen">
+      <div id="game-header">
+        <div id="score-display">Score: <span id="score">0</span></div>
+        <div id="timer-display">⏱ <span id="timer">--</span></div>
+        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
+      </div>
+      <div id="end-banner" style="display:none"></div>
+      <div id="guess-bar">
+        <input type="text" id="global-guess" class="guess-input" placeholder="Type a song title or artist and press Enter…" autocomplete="off" />
+        <div id="global-hint" class="hint-text">Start guessing!</div>
+      </div>
+      <div id="tracks-container"></div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
