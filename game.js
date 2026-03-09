@@ -28,18 +28,12 @@ async function fetchTracks(query, count) {
   }));
 }
 
-// ─── Playlist search ──────────────────────────────────────────────────────────
-async function searchPlaylists(query) {
-  const data = await deezerFetch(`/search/playlist?q=${encodeURIComponent(query)}&limit=20`);
-  return (data.data || []).map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_tracks }));
-}
-
-async function fetchTracksFromPlaylist(playlistId, count) {
+async function fetchTracksFromPlaylist(playlistId, count, excludeIds = new Set()) {
   const data = await deezerFetch(`/playlist/${playlistId}/tracks?limit=100`);
-  const withPreview = (data.data || []).filter(t => t.preview);
-  if (withPreview.length < count) throw new Error('Not enough tracks with previews in this playlist.');
+  const withPreview = (data.data || []).filter(t => t.preview && !excludeIds.has(t.id));
+  if (withPreview.length < count) throw new Error('Not enough new tracks with previews in this playlist. All tracks may have been played already.');
   const shuffled = withPreview.sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count).map(t => ({
+  const picked = shuffled.slice(0, count).map(t => ({
     id: t.id,
     title: t.title_short || t.title,
     artist: t.artist.name,
@@ -47,6 +41,14 @@ async function fetchTracksFromPlaylist(playlistId, count) {
     cover: t.album.cover_medium,
     preview: t.preview,
   }));
+  // Return total available count alongside tracks so caller can store it
+  return { tracks: picked, totalAvailable: withPreview.length };
+}
+
+// ─── Playlist search ──────────────────────────────────────────────────────────
+async function searchPlaylists(query) {
+  const data = await deezerFetch(`/search/playlist?q=${encodeURIComponent(query)}&limit=20`);
+  return (data.data || []).map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_tracks }));
 }
 
 // ─── Normalisation for comparison ────────────────────────────────────────────
@@ -61,22 +63,25 @@ function normalise(str) {
 
 function isMatch(guess, track) {
   const g = normalise(guess);
-  if (g.length < 3) return false;
-
   const title = normalise(track.title);
   const artist = normalise(track.artist);
 
-  // A field matches if every word of the guess matches the start of the
-  // corresponding word in the field (prefix per-word), AND the guess covers
-  // at least the first word fully.
-  function wordPrefixMatch(query, target) {
-    const qWords = query.split(' ');
-    const tWords = target.split(' ');
-    if (qWords.length > tWords.length) return false;
-    return qWords.every((qw, i) => tWords[i] && tWords[i].startsWith(qw));
+  const MIN_CHARS = 5;
+
+  function fieldMatch(query, target) {
+    // Minimum required length: MIN_CHARS, unless the target itself is shorter
+    const required = Math.min(MIN_CHARS, target.length);
+    if (query.length < required) return false;
+
+    // The guess must also cover at least half the target length
+    const halfTarget = Math.ceil(target.length / 2);
+    if (query.length < Math.min(halfTarget, MIN_CHARS)) return false;
+
+    // Substring match anywhere in the target
+    return target.includes(query);
   }
 
-  return wordPrefixMatch(g, title) || wordPrefixMatch(g, artist);
+  return fieldMatch(g, title) || fieldMatch(g, artist);
 }
 
 // ─── Game State ───────────────────────────────────────────────────────────────
@@ -85,9 +90,12 @@ const state = {
   audios: [],
   found: [],
   score: 0,
+  totalScore: 0,
   timerInterval: null,
   timeLeft: 60,
   timeLimitEnabled: true,
+  playedTrackIds: new Set(),
+  totalAvailableInPlaylist: 0,
 };
 
 // ─── DOM helpers ─────────────────────────────────────────────────────────────
@@ -221,8 +229,10 @@ function markFound(index, track) {
   card.classList.remove('playing');
   card.classList.add('found');
 
-  state.score += 100;
-  $('score').textContent = state.score;
+  const points = parseInt($('track-count').value) * 10;
+  state.score += points;
+  state.totalScore += points;
+  $('score').textContent = state.totalScore;
 
   if (state.found.length === state.tracks.length) {
     setTimeout(() => endGame(true), 600);
@@ -270,22 +280,38 @@ async function startGame() {
 
   showLoading('Fetching tracks from playlist…');
 
+  let exhausted = false;
+  let result;
   try {
-    state.tracks = await fetchTracksFromPlaylist(playlistId, count);
+    result = await fetchTracksFromPlaylist(playlistId, count, state.playedTrackIds);
   } catch (err) {
     hideLoading();
-    alert('Could not load tracks: ' + err.message);
-    return;
+    if (state.playedTrackIds.size > 0) {
+      exhausted = true;
+      state.playedTrackIds.clear();
+      showLoading('Playlist exhausted — starting over…');
+      try {
+        result = await fetchTracksFromPlaylist(playlistId, count, state.playedTrackIds);
+      } catch (err2) {
+        hideLoading();
+        alert('Could not load tracks: ' + err2.message);
+        return;
+      }
+    } else {
+      alert('Could not load tracks: ' + err.message);
+      return;
+    }
   }
 
+  state.tracks = result.tracks;
+  state.totalAvailableInPlaylist = result.totalAvailable;
+
+  // Register newly picked tracks as played
+  state.tracks.forEach(t => state.playedTrackIds.add(t.id));
+
   // Reset state
-  state.audios.forEach(a => { a.pause(); });
+  state.audios.forEach(a => destroyAudio(a));
   state.audios = [];
-  state.found = [];
-  state.score = 0;
-  $('score').textContent = '0';
-  $('timer-display').classList.remove('urgent');
-  clearInterval(state.timerInterval);
 
   // Reset UI from previous game
   const gi = $('global-guess');
@@ -303,8 +329,23 @@ async function startGame() {
   buildTrackCards(state.tracks);
   showScreen('game');
 
+  // Show exhausted notice in the hint bar after screen switch
+  if (exhausted) {
+    const hint = $('global-hint');
+    hint.className = 'hint-text exhausted';
+    hint.textContent = '🔁 All playlist tracks had been played — the list has been reset!';
+    setTimeout(() => {
+      if (hint.classList.contains('exhausted')) {
+        hint.className = 'hint-text';
+        hint.textContent = 'Start guessing!';
+      }
+    }, 4000);
+  }
+
   // Preload and play all audios
   showLoading('Loading audio previews…');
+
+  const failedIndices = [];
   await Promise.all(state.tracks.map((track, i) => new Promise(resolve => {
     const audio = new Audio();
     audio.crossOrigin = 'anonymous';
@@ -313,9 +354,90 @@ async function startGame() {
     audio.loop = true;
     state.audios[i] = audio;
     audio.addEventListener('canplaythrough', resolve, { once: true });
-    audio.addEventListener('error', resolve, { once: true }); // don't block on error
+    audio.addEventListener('error', () => { failedIndices.push(i); resolve(); }, { once: true });
     audio.load();
   })));
+
+  // Replace any tracks whose audio failed to load, retrying until all slots filled
+  if (failedIndices.length > 0) {
+    let toReplace = [...failedIndices];
+    const maxAttempts = 3;
+
+    for (let attempt = 0; attempt < maxAttempts && toReplace.length > 0; attempt++) {
+      showLoading(`Replacing ${toReplace.length} unplayable track(s)… (attempt ${attempt + 1})`);
+      const excludeForReplacement = new Set([
+        ...state.playedTrackIds,
+        ...toReplace.map(i => state.tracks[i].id),
+      ]);
+
+      let replacements;
+      try {
+        const replacementResult = await fetchTracksFromPlaylist(playlistId, toReplace.length, excludeForReplacement);
+        replacements = replacementResult.tracks;
+      } catch (e) {
+        break; // No more tracks available
+      }
+
+      const stillFailed = [];
+      await Promise.all(replacements.map((track, ri) => new Promise(resolve => {
+        const i = toReplace[ri];
+
+        // Cleanly destroy the failed audio before replacing
+        destroyAudio(state.audios[i]);
+
+        state.tracks[i] = track;
+        state.playedTrackIds.add(track.id);
+
+        const audio = new Audio();
+        audio.crossOrigin = 'anonymous';
+        audio.src = track.preview;
+        audio.volume = 0.7;
+        audio.loop = true;
+        state.audios[i] = audio;
+
+        audio.addEventListener('canplaythrough', () => {
+          // Rebuild the card only on success
+          const oldCard = $(`card-${i}`);
+          const newCard = document.createElement('div');
+          newCard.className = 'track-card playing';
+          newCard.id = `card-${i}`;
+
+          const num = document.createElement('div');
+          num.className = 'track-number';
+          num.textContent = `Track ${i + 1}`;
+
+          const badge = document.createElement('div');
+          badge.className = 'found-badge';
+          badge.textContent = '✓ FOUND';
+
+          const viz = createVisualizer();
+
+          const answer = document.createElement('div');
+          answer.className = 'answer-reveal';
+          answer.innerHTML = `
+            <div class="answer-title">${track.title}</div>
+            <div class="answer-artist">by ${track.artist}</div>
+          `;
+
+          newCard.appendChild(num);
+          newCard.appendChild(badge);
+          newCard.appendChild(viz);
+          newCard.appendChild(answer);
+          if (oldCard) oldCard.replaceWith(newCard);
+
+          resolve();
+        }, { once: true });
+
+        audio.addEventListener('error', () => {
+          stillFailed.push(i);
+          resolve();
+        }, { once: true });
+
+        audio.load();
+      })));
+      toReplace = stillFailed;
+    }
+  }
 
   hideLoading();
 
@@ -330,7 +452,7 @@ async function startGame() {
 
 function endGame(won) {
   clearInterval(state.timerInterval);
-  state.audios.forEach(a => { a.pause(); });
+  state.audios.forEach(a => { a.pause(); }); // pause only, keep src for playback in revealed cards
 
   // Disable guess input
   const gi = $('global-guess');
@@ -393,16 +515,30 @@ function endGame(won) {
     else card.prepend(header);
   });
 
+  // Compute how many unplayed tracks remain after this round
+  const count = parseInt($('track-count').value);
+  const remaining = state.totalAvailableInPlaylist - count;
+  const lowTracksWarning = remaining < count
+    ? `<p class="banner-warning">🎉 You reached the end of the playlist!</p>
+       <p class="banner-warning">⚠️ Playing again will reset the list</p>`
+    : '';
+
+  const playAgainClass = remaining < count ? 'btn-danger' : 'btn-primary';
+  const playAgainText = remaining < count ? '🔄 Restart Playlist': '🔄 Play Again';
+  const returnClass = remaining < count ? 'btn-primary' : 'btn-danger';
+
   // Show end banner
   const banner = $('end-banner');
   banner.innerHTML = `
     <div>
       <h2>${won ? '🎉 You got them all!' : '⏱ Time\'s up!'}</h2>
-      <p>You found ${state.found.length} / ${state.tracks.length} tracks — Score: ${state.score}</p>
+      <p>You found ${state.found.length} / ${state.tracks.length} tracks — Round score: ${state.score}</p>
+      <p>Total score: <strong>${state.totalScore}</strong></p>
+      ${lowTracksWarning}
     </div>
     <div class="banner-actions">
-      <button id="play-again-btn" class="btn btn-primary">🔄 Play Again</button>
-      <button id="return-setup-btn" class="btn btn-danger">↩ Return to Setup</button>
+      <button id="play-again-btn" class="btn ${playAgainClass}">${playAgainText}</button>
+      <button id="return-setup-btn" class="btn ${returnClass}">↩ Return to Setup</button>
     </div>
   `;
   banner.style.display = 'flex';
@@ -413,9 +549,19 @@ function endGame(won) {
   });
 
   $('return-setup-btn').addEventListener('click', () => {
-    state.audios.forEach(a => { a.pause(); });
+    state.audios.forEach(a => destroyAudio(a));
+    state.audios = [];
+    state.playedTrackIds.clear();
     showScreen('setup');
   });
+}
+
+// ─── Audio cleanup helper ─────────────────────────────────────────────────────
+function destroyAudio(audio) {
+  if (!audio) return;
+  audio.pause();
+  audio.src = '';
+  audio.load(); // flush any pending load
 }
 
 // ─── Event listeners ──────────────────────────────────────────────────────────

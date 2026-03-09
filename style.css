@@ -179,6 +179,10 @@ header .subtitle { color: var(--muted); margin-top: 6px; }
 }
 .hint-text.wrong { color: #e74c3c; }
 .hint-text.correct { color: var(--success); }
+.hint-text.exhausted {
+  color: var(--warning);
+  font-weight: 600;
+}
 
 .answer-reveal {
   display: none;
@@ -326,6 +330,13 @@ header .subtitle { color: var(--muted); margin-top: 6px; }
 }
 #end-banner h2 { font-size: 1.4rem; color: var(--accent); }
 #end-banner p { font-size: 0.95rem; color: var(--muted); margin-top: 4px; }
+.banner-warning {
+  font-size: 0.88rem;
+  color: var(--warning);
+  margin-top: 8px;
+  font-weight: 500;
+}
+.banner-warning strong { font-weight: 700; }
 #end-banner .banner-actions { display: flex; gap: 10px; }
 
 /* Per-card play button */
