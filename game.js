@@ -312,6 +312,8 @@ async function startGame() {
   // Reset state
   state.audios.forEach(a => destroyAudio(a));
   state.audios = [];
+  state.score = 0;
+  state.found = [];
 
   // Reset UI from previous game
   const gi = $('global-guess');
@@ -353,8 +355,20 @@ async function startGame() {
     audio.volume = 0.7;
     audio.loop = true;
     state.audios[i] = audio;
-    audio.addEventListener('canplaythrough', resolve, { once: true });
-    audio.addEventListener('error', () => { failedIndices.push(i); resolve(); }, { once: true });
+
+    const onSuccess = () => { clearTimeout(timeout); resolve(); };
+    const onError = () => { clearTimeout(timeout); failedIndices.push(i); resolve(); };
+
+    // Treat stalled loads (e.g. 403 that never fires 'error') as failures after 8s
+    const timeout = setTimeout(() => {
+      audio.removeEventListener('canplaythrough', onSuccess);
+      audio.removeEventListener('error', onError);
+      failedIndices.push(i);
+      resolve();
+    }, 8000);
+
+    audio.addEventListener('canplaythrough', onSuccess, { once: true });
+    audio.addEventListener('error', onError, { once: true });
     audio.load();
   })));
 
@@ -382,7 +396,6 @@ async function startGame() {
       await Promise.all(replacements.map((track, ri) => new Promise(resolve => {
         const i = toReplace[ri];
 
-        // Cleanly destroy the failed audio before replacing
         destroyAudio(state.audios[i]);
 
         state.tracks[i] = track;
@@ -395,44 +408,33 @@ async function startGame() {
         audio.loop = true;
         state.audios[i] = audio;
 
-        audio.addEventListener('canplaythrough', () => {
-          // Rebuild the card only on success
-          const oldCard = $(`card-${i}`);
-          const newCard = document.createElement('div');
-          newCard.className = 'track-card playing';
-          newCard.id = `card-${i}`;
-
-          const num = document.createElement('div');
-          num.className = 'track-number';
-          num.textContent = `Track ${i + 1}`;
-
-          const badge = document.createElement('div');
-          badge.className = 'found-badge';
-          badge.textContent = '✓ FOUND';
-
-          const viz = createVisualizer();
-
-          const answer = document.createElement('div');
-          answer.className = 'answer-reveal';
-          answer.innerHTML = `
-            <div class="answer-title">${track.title}</div>
-            <div class="answer-artist">by ${track.artist}</div>
-          `;
-
-          newCard.appendChild(num);
-          newCard.appendChild(badge);
-          newCard.appendChild(viz);
-          newCard.appendChild(answer);
-          if (oldCard) oldCard.replaceWith(newCard);
-
+        const onSuccess = () => {
+          clearTimeout(timeout);
+          // Update the existing card's answer reveal in-place (card already in DOM)
+          const card = $(`card-${i}`);
+          if (card) {
+            const answerEl = card.querySelector('.answer-reveal');
+            if (answerEl) {
+              answerEl.innerHTML = `
+                <div class="answer-title">${track.title}</div>
+                <div class="answer-artist">by ${track.artist}</div>
+              `;
+            }
+          }
           resolve();
-        }, { once: true });
+        };
 
-        audio.addEventListener('error', () => {
+        const onError = () => { clearTimeout(timeout); stillFailed.push(i); resolve(); };
+
+        const timeout = setTimeout(() => {
+          audio.removeEventListener('canplaythrough', onSuccess);
+          audio.removeEventListener('error', onError);
           stillFailed.push(i);
           resolve();
-        }, { once: true });
+        }, 8000);
 
+        audio.addEventListener('canplaythrough', onSuccess, { once: true });
+        audio.addEventListener('error', onError, { once: true });
         audio.load();
       })));
       toReplace = stillFailed;
@@ -562,6 +564,17 @@ function destroyAudio(audio) {
   audio.pause();
   audio.src = '';
   audio.load(); // flush any pending load
+}
+
+// ─── Preview URL validation ───────────────────────────────────────────────────
+async function isPreviewAccessible(url) {
+  try {
+    const res = await fetch(url, { method: 'HEAD', mode: 'no-cors' });
+    // no-cors always returns opaque (status 0) for cross-origin — fall back to GET probe via Audio
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
