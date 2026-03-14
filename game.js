@@ -1,11 +1,18 @@
 // ─── Deezer CORS proxy helper ───────────────────────────────────────────────
 // Deezer's API doesn't allow direct browser requests; use a public CORS proxy.
-const CORS_PROXY = 'https://corsproxy.io/?';
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 const DEEZER_API = 'https://api.deezer.com';
 
 async function deezerFetch(path) {
-  const res = await fetch(CORS_PROXY + encodeURIComponent(DEEZER_API + path));
-  if (!res.ok) throw new Error('Deezer API error');
+  const url = CORS_PROXY + encodeURIComponent(DEEZER_API + path);
+  console.log('[deezerFetch] Requesting:', DEEZER_API + path);
+  const res = await fetch(url);
+  if (!res.ok) {
+    let errorDetail = '';
+    try { errorDetail = await res.text(); } catch (_) {}
+    console.error('[deezerFetch] HTTP error', res.status, errorDetail);
+    throw new Error(`Deezer API error: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -47,8 +54,14 @@ async function fetchTracksFromPlaylist(playlistId, count, excludeIds = new Set()
 
 // ─── Playlist search ─────────────────────────────────────────────────────────
 async function searchPlaylists(query) {
-  const data = await deezerFetch(`/search/playlist?q=${encodeURIComponent(query)}&limit=20`);
-  return (data.data || []).map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_songs }));
+  console.log('[searchPlaylists] Searching for:', query);
+  const data = await deezerFetch(`/search?q=${encodeURIComponent(query)}&type=playlist&limit=20`);
+  if (!data || !Array.isArray(data.data)) {
+    console.warn('[searchPlaylists] Unexpected response shape:', data);
+    return [];
+  }
+  console.log('[searchPlaylists] Found', data.data.length, 'playlists');
+  return data.data.map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_songs }));
 }
 
 // ─── Normalisation for comparison ────────────────────────────────────────────
@@ -601,6 +614,7 @@ $('search-playlist-btn').addEventListener('click', async () => {
       $('playlist-select-label').style.display = 'flex';
     }
   } catch (e) {
+    console.error('[search-playlist-btn] Search failed:', e);
     alert('Playlist search failed: ' + e.message);
   }
 
