@@ -9,7 +9,7 @@ async function deezerFetch(path) {
   return res.json();
 }
 
-// ─── Track fetching ──────────────────────────────────────────────────────────
+// ─── Track fetching ─────────────────────────────────────────────────────────
 async function fetchTracks(query, count) {
   // Fetch more than needed so we can filter out those without previews
   const data = await deezerFetch(`/search?q=${encodeURIComponent(query)}&limit=50`);
@@ -45,10 +45,10 @@ async function fetchTracksFromPlaylist(playlistId, count, excludeIds = new Set()
   return { tracks: picked, totalAvailable: withPreview.length };
 }
 
-// ─── Playlist search ──────────────────────────────────────────────────────────
+// ─── Playlist search ─────────────────────────────────────────────────────────
 async function searchPlaylists(query) {
   const data = await deezerFetch(`/search/playlist?q=${encodeURIComponent(query)}&limit=20`);
-  return (data.data || []).map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_tracks }));
+  return (data.data || []).map(p => ({ id: p.id, title: p.title, nb_tracks: p.nb_songs }));
 }
 
 // ─── Normalisation for comparison ────────────────────────────────────────────
@@ -84,7 +84,7 @@ function isMatch(guess, track) {
   return fieldMatch(g, title) || fieldMatch(g, artist);
 }
 
-// ─── Game State ───────────────────────────────────────────────────────────────
+// ─── Game State ──────────────────────────────────────────────────────────
 const state = {
   tracks: [],
   audios: [],
@@ -98,7 +98,7 @@ const state = {
   totalAvailableInPlaylist: 0,
 };
 
-// ─── DOM helpers ─────────────────────────────────────────────────────────────
+// ─── DOM helpers ──────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
 function showScreen(name) {
@@ -239,7 +239,7 @@ function markFound(index, track) {
   }
 }
 
-// ─── Timer ────────────────────────────────────────────────────────────────────
+// ─── Timer ────────────────────────────────────────────────────────────
 function startTimer(seconds) {
   state.timeLeft = seconds;
   const timerEl = $('timer');
@@ -267,7 +267,7 @@ function startTimer(seconds) {
   }, 1000);
 }
 
-// ─── Game lifecycle ───────────────────────────────────────────────────────────
+// ─── Game lifecycle ─────────────────────────────────────────────────────────
 async function startGame() {
   const count = parseInt($('track-count').value);
   const timeLimit = parseInt($('time-limit').value);
@@ -566,7 +566,7 @@ function destroyAudio(audio) {
   audio.load(); // flush any pending load
 }
 
-// ─── Preview URL validation ───────────────────────────────────────────────────
+// ─── Preview URL validation ───────────────────────────���───────────────────────
 async function isPreviewAccessible(url) {
   try {
     const res = await fetch(url, { method: 'HEAD', mode: 'no-cors' });
@@ -577,7 +577,7 @@ async function isPreviewAccessible(url) {
   }
 }
 
-// ─── Event listeners ──────────────────────────────────────────────────────────
+// ─── Event listeners ─────────────────────────────────────────────────────────
 $('search-playlist-btn').addEventListener('click', async () => {
   const query = $('playlist-query').value.trim();
   if (!query) return;
